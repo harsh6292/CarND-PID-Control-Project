@@ -28,14 +28,49 @@ std::string hasData(std::string s) {
   return "";
 }
 
-int main()
+int main(int arg_count, char* argv[])
 {
   uWS::Hub h;
 
-  PID pid;
+  // Constant variable to define if twiddle is enabled
+  const bool isTwiddleEnabled = false;
+
+  // Max steps to run twiddle and then reset
+  const int MAX_STEP_TWIDDLE = 700;
+
+  PID steerPid;
+  PID speedPid;
   // TODO: Initialize the pid variable.
 
-  h.onMessage([&pid](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
+  // Default values of constants
+  double kp = 0.25;
+  double ki = 0.0001567;
+  double kd = 1.783;
+
+  std::cout<<"Argument count: "<<arg_count<<std::endl;
+
+  // Read constant values from command line args if they are present
+  if (arg_count > 3) {
+    if (argv[1] != NULL) {
+      kp = atof(argv[1]);
+    }
+
+    if (argv[2] != NULL) {
+      ki = atof(argv[2]);
+    }
+
+    if (argv[3] != NULL) {
+      kd = atof(argv[3]);
+    }
+  }
+
+  std::cout<<"Initial values of Kp: "<<kp<<", Ki: "<<ki<<", Kd: "<<kd<<std::endl;
+
+  steerPid.Init(kp, ki, kd);
+
+  speedPid.Init(0.5, 0.0, 0.65);
+
+  h.onMessage([&steerPid, &speedPid](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
@@ -57,16 +92,55 @@ int main()
           * NOTE: Feel free to play around with the throttle and speed. Maybe use
           * another PID controller to control the speed!
           */
-          
+
+          // Update the PID controller taking into account new CTE value
+          steerPid.UpdateError(cte);
+
+          // Get the new steering value from PID
+          steer_value = steerPid.TotalError();
+
+          if (steer_value < -1.0) {
+            steer_value = -1.0;
+          } else if (steer_value > 1.0) {
+            steer_value = 1.0;
+          }
+
+
+          speedPid.UpdateError(speed - 30.0);
+          speed = speedPid.TotalError();
+
           // DEBUG
-          std::cout << "CTE: " << cte << " Steering Value: " << steer_value << std::endl;
+          //std::cout << "CTE: " << cte << " Steering Value: " << steer_value << std::endl;
+          //std::cout << "Speed: " << speed << std::endl;
 
           json msgJson;
           msgJson["steering_angle"] = steer_value;
-          msgJson["throttle"] = 0.3;
+          msgJson["throttle"] = speed;
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
-          std::cout << msg << std::endl;
+          //std::cout << msg << std::endl;
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
+
+
+
+          // Start checking for twiddle here
+          if (isTwiddleEnabled && steerPid.getNumOfSteps() % MAX_STEP_TWIDDLE == 0) {
+            steerPid.twiddle();
+
+            std::cout << "################################################" << std::endl;
+            std::cout << "Max step for twiddle reached with params" << std::endl;
+            double new_kp = steerPid.tau[0];
+            double new_ki = steerPid.tau[1];
+            double new_kd = steerPid.tau[2];
+            std::cout << "Params: Kp: " << new_kp << ", Ki: " << new_ki << ", Kd: " << new_kd << std::endl;
+            std::cout << "Resetting simulator with above initial params now" << std::endl;
+
+            steerPid.Init(new_kp, new_ki, new_kd);
+
+            // Reset the simulator now
+            std::string reset_msg = "42[\"reset\", {}]";
+            std::cout << reset_msg << std::endl;
+            ws.send(reset_msg.data(), reset_msg.length(), uWS::OpCode::TEXT);
+          }
         }
       } else {
         // Manual driving
