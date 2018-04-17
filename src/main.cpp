@@ -3,6 +3,7 @@
 #include "json.hpp"
 #include "PID.h"
 #include <math.h>
+#include <fstream>
 
 // for convenience
 using json = nlohmann::json;
@@ -32,11 +33,17 @@ int main(int arg_count, char* argv[])
 {
   uWS::Hub h;
 
+  bool isConnectedToSimulator = false;
+
   // Constant variable to define if twiddle is enabled
   const bool isTwiddleEnabled = false;
 
   // Max steps to run twiddle and then reset
   const int MAX_STEP_TWIDDLE = 700;
+
+  int timestep = 1;
+
+  std::ofstream cte_file;
 
   PID steerPid;
   PID speedPid;
@@ -47,7 +54,7 @@ int main(int arg_count, char* argv[])
   double ki = 0.0001567;
   double kd = 1.783;
 
-  std::cout<<"Argument count: "<<arg_count<<std::endl;
+  //std::cout<<"Argument count: "<<arg_count<<std::endl;
 
   // Read constant values from command line args if they are present
   if (arg_count > 3) {
@@ -70,7 +77,10 @@ int main(int arg_count, char* argv[])
 
   speedPid.Init(0.5, 0.0, 0.65);
 
-  h.onMessage([&steerPid, &speedPid](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
+  //cte_file.open("cte_file.txt", std::ios::out);
+  //cte_file<<"Time Step    CTE\n";
+
+  h.onMessage([&steerPid, &speedPid, &cte_file, &timestep](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
@@ -86,12 +96,6 @@ int main(int arg_count, char* argv[])
           double speed = std::stod(j[1]["speed"].get<std::string>());
           double angle = std::stod(j[1]["steering_angle"].get<std::string>());
           double steer_value;
-          /*
-          * TODO: Calcuate steering value here, remember the steering value is
-          * [-1, 1].
-          * NOTE: Feel free to play around with the throttle and speed. Maybe use
-          * another PID controller to control the speed!
-          */
 
           // Update the PID controller taking into account new CTE value
           steerPid.UpdateError(cte);
@@ -117,10 +121,11 @@ int main(int arg_count, char* argv[])
           msgJson["steering_angle"] = steer_value;
           msgJson["throttle"] = speed;
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
-          //std::cout << msg << std::endl;
+          std::cout << msg << std::endl;
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
 
 
+          //cte_file << timestep << " " << cte << "\n";
 
           // Start checking for twiddle here
           if (isTwiddleEnabled && steerPid.getNumOfSteps() % MAX_STEP_TWIDDLE == 0) {
@@ -141,6 +146,8 @@ int main(int arg_count, char* argv[])
             std::cout << reset_msg << std::endl;
             ws.send(reset_msg.data(), reset_msg.length(), uWS::OpCode::TEXT);
           }
+
+          timestep += 1;
         }
       } else {
         // Manual driving
@@ -165,12 +172,19 @@ int main(int arg_count, char* argv[])
     }
   });
 
-  h.onConnection([&h](uWS::WebSocket<uWS::SERVER> ws, uWS::HttpRequest req) {
+  h.onConnection([&h, &isConnectedToSimulator, &cte_file](uWS::WebSocket<uWS::SERVER> ws, uWS::HttpRequest req) {
     std::cout << "Connected!!!" << std::endl;
+
+    if (isConnectedToSimulator) {
+        //cte_file.close();
+    } else {
+        isConnectedToSimulator = true;
+    }
   });
 
-  h.onDisconnection([&h](uWS::WebSocket<uWS::SERVER> ws, int code, char *message, size_t length) {
+  h.onDisconnection([&h, &cte_file](uWS::WebSocket<uWS::SERVER> ws, int code, char *message, size_t length) {
     ws.close();
+    //cte_file.close();
     std::cout << "Disconnected" << std::endl;
   });
 
